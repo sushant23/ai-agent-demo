@@ -97,6 +97,7 @@ export class AnthropicProvider extends BaseLLMProvider {
   }
 
   async generateWithTools(request: ToolGenerationRequest): Promise<ToolGenerationResponse> {
+    console.log(`🔧 Anthropic Provider: generateWithTools called with ${request.tools.length} tools`);
     this.validateToolRequest(request);
 
     try {

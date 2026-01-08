@@ -337,10 +337,11 @@
                 this.messages = [];
                 this.sessionId = null;
                 this.userId = 'web_user_' + Math.random().toString(36).substring(2, 9);
+                this.isInitialized = false;
                 
                 this.initializeElements();
                 this.attachEventListeners();
-                this.initialize();
+                this.initializeChat();
             }
 
             initializeElements() {
@@ -369,54 +370,99 @@
                 this.clearButton.addEventListener('click', () => this.clearChat());
             }
 
-            async initialize() {
+            async initializeChat() {
+                if (this.isInitialized) return;
+                
                 try {
                     this.updateStatus('Connecting...', false);
-                    
-                    // Simulate initialization
-                    await this.delay(1000);
-                    
-                    this.sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+                    await this.createSession();
+                    this.isInitialized = true;
                     this.updateStatus('Connected', true);
-                    
-                    // Add welcome message
-                    this.addMessage({
-                        content: "Hello! I'm your AI business assistant. I can help you with product management, analytics, SEO optimization, and more. What would you like to work on today?",
-                        sender: 'agent',
-                        timestamp: new Date(),
-                        metadata: { type: 'welcome' }
+                    console.log('Chat interface initialized with session:', this.sessionId);
+                } catch (error) {
+                    console.error('Failed to initialize chat:', error);
+                    this.updateStatus('Connection failed', false);
+                    this.showError('Failed to connect to chat server. Please refresh the page.');
+                }
+            }
+
+            async createSession() {
+                try {
+                    const response = await fetch('/api/sessions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ userId: this.userId })
                     });
+
+                    if (!response.ok) {
+                        throw new Error(`Failed to create session: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    this.sessionId = data.sessionId;
+                    
+                    // Load initial messages (including welcome message)
+                    await this.loadMessages();
                     
                 } catch (error) {
-                    console.error('Initialization failed:', error);
-                    this.updateStatus('Connection failed', false);
+                    console.error('Error creating session:', error);
+                    throw error;
                 }
+            }
+
+            async loadMessages() {
+                if (!this.sessionId) return;
+                
+                try {
+                    const response = await fetch(`/api/sessions/${this.sessionId}/messages`);
+                    if (!response.ok) {
+                        throw new Error(`Failed to load messages: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    this.messages = data.messages || [];
+                    this.renderMessages();
+                    
+                } catch (error) {
+                    console.error('Error loading messages:', error);
+                }
+            }
+
+            renderMessages() {
+                this.chatMessages.innerHTML = '';
+                this.messages.forEach(message => {
+                    this.addMessageToDOM(message);
+                });
+                this.scrollToBottom();
             }
 
             async sendMessage() {
                 const content = this.messageInput.value.trim();
                 if (!content) return;
 
-                // Add user message
+                // Clear input and set sending state
+                this.messageInput.value = '';
+                this.autoResize();
+                this.setSendingState(true);
+
+                // Add user message to DOM immediately for better UX
                 const userMessage = {
                     content,
                     sender: 'user',
                     timestamp: new Date()
                 };
-                
-                this.addMessage(userMessage);
-                this.messageInput.value = '';
-                this.autoResize();
-                this.setSendingState(true);
+                this.addMessageToDOM(userMessage);
 
                 try {
-                    // Simulate API call to agent
+                    // Call agent API
                     const response = await this.callAgent(content);
-                    this.addMessage(response);
+                    this.addMessageToDOM(response);
                     
                 } catch (error) {
                     console.error('Error sending message:', error);
-                    this.addMessage({
+                    this.addMessageToDOM({
                         content: "I'm sorry, I encountered an issue processing your request. Please try again.",
                         sender: 'agent',
                         timestamp: new Date(),
@@ -431,90 +477,53 @@
                 // Show typing indicator
                 this.showTyping(true);
                 
-                // Simulate processing delay
-                await this.delay(1000 + Math.random() * 2000);
-                
-                this.showTyping(false);
-                
-                // Simulate agent response based on content
-                const response = this.generateMockResponse(content);
-                
-                return {
-                    content: response.content,
-                    sender: 'agent',
-                    timestamp: new Date(),
-                    metadata: {
-                        processingTime: Math.floor(Math.random() * 2000) + 500,
-                        provider: 'mock-provider',
-                        workflow: 'routing',
-                        confidence: 0.8 + Math.random() * 0.2,
-                        nextStepActions: response.nextStepActions
+                try {
+                    // Ensure we have a session
+                    if (!this.sessionId) {
+                        await this.createSession();
                     }
-                };
-            }
 
-            generateMockResponse(content) {
-                const lowerContent = content.toLowerCase();
-                
-                if (lowerContent.includes('product') || lowerContent.includes('inventory')) {
+                    // Make real API call to agent
+                    const response = await fetch(`/api/sessions/${this.sessionId}/messages`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ content })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`API call failed: ${response.status} ${response.statusText}`);
+                    }
+
+                    const data = await response.json();
+                    this.showTyping(false);
+                    
+                    return data.message;
+
+                } catch (error) {
+                    this.showTyping(false);
+                    console.error('Error calling agent:', error);
+                    
+                    // Return error message
                     return {
-                        content: "I can help you with product management! I can analyze your product performance, optimize listings, and provide insights on inventory levels. Would you like me to show you your top-performing products or help with a specific product?",
-                        nextStepActions: [
-                            { title: 'View Top Products', description: 'See your best-performing products' },
-                            { title: 'Analyze Product', description: 'Get detailed insights about a specific product' },
-                            { title: 'Optimize Listings', description: 'Improve your product listings for better visibility' }
-                        ]
+                        content: "I'm sorry, I encountered an issue processing your request. Please check that the server is running and try again.",
+                        sender: 'agent',
+                        timestamp: new Date(),
+                        metadata: {
+                            error: true,
+                            errorMessage: error.message
+                        }
                     };
                 }
-                
-                if (lowerContent.includes('seo') || lowerContent.includes('optimization')) {
-                    return {
-                        content: "Great! SEO optimization is crucial for product visibility. I can help you optimize your product titles, descriptions, and tags for better search rankings. I can also analyze your current SEO performance and suggest improvements.",
-                        nextStepActions: [
-                            { title: 'SEO Analysis', description: 'Analyze current SEO performance' },
-                            { title: 'Optimize Product', description: 'Improve SEO for a specific product' },
-                            { title: 'Keyword Research', description: 'Find better keywords for your products' }
-                        ]
-                    };
-                }
-                
-                if (lowerContent.includes('analytics') || lowerContent.includes('performance') || lowerContent.includes('sales')) {
-                    return {
-                        content: "I'd be happy to help with analytics! I can show you sales performance, revenue trends, conversion rates, and other key metrics. I can also provide insights on what's driving your business performance.",
-                        nextStepActions: [
-                            { title: 'View Dashboard', description: 'See your main analytics dashboard' },
-                            { title: 'Sales Report', description: 'Get detailed sales performance report' },
-                            { title: 'Trend Analysis', description: 'Analyze performance trends over time' }
-                        ]
-                    };
-                }
-                
-                if (lowerContent.includes('marketing') || lowerContent.includes('campaign')) {
-                    return {
-                        content: "Marketing campaigns can really boost your sales! I can help you create targeted campaigns, analyze campaign performance, and suggest optimization strategies. What type of marketing are you interested in?",
-                        nextStepActions: [
-                            { title: 'Create Campaign', description: 'Set up a new marketing campaign' },
-                            { title: 'Campaign Analysis', description: 'Review existing campaign performance' },
-                            { title: 'Marketing Ideas', description: 'Get suggestions for marketing strategies' }
-                        ]
-                    };
-                }
-                
-                // Default response
-                return {
-                    content: "I'm here to help with your e-commerce business! I can assist with product management, analytics, SEO optimization, marketing campaigns, and more. What specific area would you like to focus on?",
-                    nextStepActions: [
-                        { title: 'Product Management', description: 'Manage and optimize your products' },
-                        { title: 'View Analytics', description: 'Check your business performance' },
-                        { title: 'SEO Optimization', description: 'Improve search visibility' },
-                        { title: 'Marketing Help', description: 'Create and manage campaigns' }
-                    ]
-                };
             }
 
             addMessage(message) {
                 this.messages.push(message);
-                
+                this.addMessageToDOM(message);
+            }
+
+            addMessageToDOM(message) {
                 const messageElement = document.createElement('div');
                 messageElement.className = `message ${message.sender}`;
                 
@@ -602,6 +611,15 @@
             updateStatus(text, connected) {
                 this.statusText.textContent = text;
                 this.statusDot.className = `status-dot ${connected ? '' : 'error'}`;
+            }
+
+            showError(message) {
+                this.addMessageToDOM({
+                    content: message,
+                    sender: 'agent',
+                    timestamp: new Date(),
+                    metadata: { error: true, type: 'system' }
+                });
             }
 
             autoResize() {

@@ -12,19 +12,13 @@ import { SimpleChatApp, ConsoleChatInterface } from './chat-app';
  * In a real application, you would provide actual API keys
  */
 const demoConfig = {
-  llm: {
-    // Uncomment and add your API keys to use real LLM providers
-    // openai: {
-    //   enabled: true,
-    //   apiKey: 'your-openai-api-key',
-    //   model: 'gpt-3.5-turbo'
-    // },
-    // anthropic: {
-    //   enabled: true,
-    //   apiKey: 'your-anthropic-api-key',
-    //   model: 'claude-3-sonnet-20240229'
-    // }
-  }
+llm: {
+        openai: {
+          enabled: true,
+          apiKey: '<OPEN_API_KEY_HERE>',
+          model: 'gpt-4'
+        }
+      }
 };
 
 /**

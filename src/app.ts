@@ -285,9 +285,44 @@ export class LLMAgnosticAIAgent {
     this.logger.info('Initializing tool registry...');
     
     this.toolRegistry = new ToolRegistry();
+    await this.toolRegistry.initialize();
     
-    // Register business tools - they will auto-register themselves
-    // The tools are imported and registered in the business-tools module
+    // Register business tools
+    await this.registerBusinessTools();
+  }
+
+  /**
+   * Register business tools with the tool registry
+   */
+  private async registerBusinessTools(): Promise<void> {
+    try {
+      // Import business tools
+      const { createRevenueAnalysisTool, createSEOAnalysisTool, createProfitabilityAnalysisTool } = await import('./tools/business-tools/analytics-tools');
+      const { createProductListTool, createProductSearchTool, createProductDetailTool } = await import('./tools/business-tools/product-management-tools');
+      const { createEmailGenerationTool, createCampaignCreationTool } = await import('./tools/business-tools/marketing-tools');
+      
+      // Create a mock business data service for now
+      const mockDataService = this.businessDataService;
+      
+      // Register analytics tools
+      await this.toolRegistry.registerTool(createRevenueAnalysisTool(mockDataService));
+      await this.toolRegistry.registerTool(createSEOAnalysisTool(mockDataService));
+      await this.toolRegistry.registerTool(createProfitabilityAnalysisTool(mockDataService));
+      
+      // Register product management tools
+      await this.toolRegistry.registerTool(createProductListTool(mockDataService));
+      await this.toolRegistry.registerTool(createProductSearchTool(mockDataService));
+      await this.toolRegistry.registerTool(createProductDetailTool(mockDataService));
+      
+      // Register marketing tools
+      await this.toolRegistry.registerTool(createEmailGenerationTool(mockDataService));
+      await this.toolRegistry.registerTool(createCampaignCreationTool(mockDataService));
+      
+      this.logger.info('Business tools registered successfully');
+    } catch (error) {
+      this.logger.warn('Failed to register some business tools:', error);
+      // Continue initialization even if some tools fail to register
+    }
   }
 
   /**

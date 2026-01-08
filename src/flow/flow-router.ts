@@ -31,7 +31,9 @@ export class FlowRouterImpl implements FlowRouter {
     context: ConversationContext
   ): Promise<IntentClassification> {
     try {
-      const provider = await this.llmRegistry.getProvider('primary');
+      // Get the first available provider instead of looking for 'primary'
+      const providers = await this.llmRegistry.listProviders();
+      const provider = providers.length > 0 ? providers[0] : null;
       if (!provider) {
         throw new Error('No LLM provider available for intent classification');
       }
@@ -110,6 +112,7 @@ export class FlowRouterImpl implements FlowRouter {
         nextFlow: this.determineNextFlow(flow, parameters, response) || undefined,
       };
     } catch (error) {
+      console.error(error)
       throw new AgentError({
         code: 'FLOW_EXECUTION_ERROR',
         message: `Failed to execute flow ${flow.id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -287,14 +290,23 @@ Classify this input:`;
     parameters: FlowParameters,
     flowState: FlowState
   ): Promise<AgentResponse> {
-    // This is a simplified flow execution - in a real implementation,
-    // this would delegate to specific flow handlers
+    // Get the first available provider instead of looking for 'primary'
+    const providers = await this.llmRegistry.listProviders();
+    console.log({providers})
+    const provider = providers.length > 0 ? providers[0] : null;
+    if (!provider) {
+      throw new Error('No LLM provider available for flow execution');
+    }
+
+    // For now, this is a simplified flow execution
+    // In a real implementation, this would delegate to specific flow handlers
+    // and potentially use tools based on the flow requirements
     const response: AgentResponse = {
       content: `Executing ${flow.name} flow for your request: "${parameters.input.content}"`,
       nextStepActions: flow.nextStepActions,
       metadata: {
         processingTime: Date.now() - parameters.input.timestamp.getTime(),
-        provider: 'flow-router',
+        provider: provider.name,
         workflow: 'routing' as any,
         confidence: parameters.intent.confidence,
         flowId: flow.id,

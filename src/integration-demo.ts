@@ -6,7 +6,7 @@
  */
 
 import { createLLMAgnosticAIAgent } from './app';
-import type { UserInput } from './types';
+import type { UserInput } from './types/agent';
 
 /**
  * Demo configuration (using mock/test values)

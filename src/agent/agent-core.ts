@@ -23,8 +23,9 @@ import { FlowRouterImpl } from '../flow/flow-router';
 import { ILLMProviderRegistry } from '../interfaces/llm-abstraction';
 import { IContextManager } from '../interfaces/context-manager';
 import { IToolRegistry } from '../interfaces/tool-registry';
-import { TextGenerationRequest, MessageRole } from '../types/llm';
+import { TextGenerationRequest, ToolGenerationRequest, ToolDefinition, MessageRole } from '../types/llm';
 import { NextStepAction, ActionType } from '../types/conversation';
+import { BusinessTool, ToolCategory } from '../types/tools';
 
 export class AgentCoreImpl implements IAgentCore {
   private workflowHandlers: Map<WorkflowType, WorkflowHandler> = new Map();
@@ -37,6 +38,7 @@ export class AgentCoreImpl implements IAgentCore {
     averageResponseTime: 0,
   };
   private workflowMetrics: Map<WorkflowType, WorkflowMetrics> = new Map();
+  private logger = console; // Simple logger for now
 
   constructor(
     private flowRouter: FlowRouterImpl,
@@ -99,13 +101,19 @@ export class AgentCoreImpl implements IAgentCore {
     const startTime = Date.now();
     this.status.totalRequests++;
     
+    console.log(`🎤 Processing user input: "${input.content}"`);
+    
     try {
       // Step 1: Classify intent and select flow
       const intent = await this.flowRouter.classifyIntent(input, context);
       const flow = this.flowRouter.selectFlow(intent);
       
+      console.log(`🎯 Intent: ${intent.intent}, Confidence: ${intent.confidence}`);
+      console.log(`🌊 Selected flow: ${flow.name}`);
+      
       // Step 2: Determine appropriate workflow pattern
       const workflowType = this.selectWorkflowType(intent, context);
+      console.log(`⚙️ Workflow type: ${workflowType}`);
       
       // Step 3: Execute workflow
       const workflowParams: WorkflowParameters = {
@@ -342,25 +350,51 @@ export class AgentCoreImpl implements IAgentCore {
   }
 
   private async executeRouting(params: WorkflowParameters): Promise<WorkflowResult> {
+    console.log(`🌊 Executing routing workflow`);
+    
     // Use flow router to handle the request
     const intent = await this.flowRouter.classifyIntent(params.input, params.context);
     const flow = this.flowRouter.selectFlow(intent);
     
-    const flowResult = await this.flowRouter.executeFlow(flow, {
-      input: params.input,
-      context: params.context,
-      intent,
-    });
+    console.log(`🎯 Flow selected: ${flow.name}`);
+    
+    // Get available tools and check if we should use them
+    const availableTools = await this.getAvailableToolsForContext(params.context);
+    const shouldUseTools = this.shouldUseToolsForStep(params.input.content, availableTools);
+    
+    console.log(`🔧 Available tools: ${availableTools.length}, Should use: ${shouldUseTools}`);
+    
+    if (shouldUseTools && availableTools.length > 0) {
+      // Use tools for this request
+      const response = await this.executeStepWithTools(params.input.content, params.context, availableTools);
+      
+      return {
+        response,
+        updatedContext: params.context,
+        executionMetadata: {
+          steps: [],
+          totalTime: 0,
+          tokensUsed: 0,
+        },
+      };
+    } else {
+      // Use regular flow execution
+      const flowResult = await this.flowRouter.executeFlow(flow, {
+        input: params.input,
+        context: params.context,
+        intent,
+      });
 
-    return {
-      response: flowResult.response,
-      updatedContext: params.context,
-      executionMetadata: {
-        steps: [],
-        totalTime: 0,
-        tokensUsed: 0,
-      },
-    };
+      return {
+        response: flowResult.response,
+        updatedContext: params.context,
+        executionMetadata: {
+          steps: [],
+          totalTime: 0,
+          tokensUsed: 0,
+        },
+      };
+    }
   }
 
   private async executeParallelization(params: WorkflowParameters): Promise<WorkflowResult> {
@@ -443,7 +477,8 @@ export class AgentCoreImpl implements IAgentCore {
   // Helper methods for workflow patterns
   private async decomposeTask(task: string): Promise<string[]> {
     // Use LLM to break down complex tasks into sequential steps
-    const provider = await this.llmRegistry.getProvider('primary');
+    const providers = await this.llmRegistry.listProviders();
+    const provider = providers.length > 0 ? providers[0] : null;
     if (!provider) {
       // Fallback to simple decomposition
       return [task];
@@ -476,7 +511,8 @@ export class AgentCoreImpl implements IAgentCore {
   }
 
   private async executeStep(step: string, context: ConversationContext): Promise<AgentResponse> {
-    const provider = await this.llmRegistry.getProvider('primary');
+    const providers = await this.llmRegistry.listProviders();
+    const provider = providers.length > 0 ? providers[0] : null;
     if (!provider) {
       throw new AgentError({
         code: 'LLM_PROVIDER_UNAVAILABLE',
@@ -487,25 +523,99 @@ export class AgentCoreImpl implements IAgentCore {
       });
     }
 
-    const request: TextGenerationRequest = {
-      messages: [
-        {
-          id: `system-${Date.now()}`,
-          role: MessageRole.SYSTEM,
-          content: 'You are a helpful business assistant. Execute this step clearly and provide 2-4 specific next actions.',
-          timestamp: new Date(),
-        },
-        ...context.conversationHistory.slice(-3), // Include recent context
-        {
-          id: `user-${Date.now()}`,
-          role: MessageRole.USER,
-          content: step,
-          timestamp: new Date(),
-        },
-      ],
-    };
+    // Get available tools and convert to LLM format
+    const availableTools = await this.getAvailableToolsForContext(context);
+    const toolDefinitions = this.convertBusinessToolsToLLMFormat(availableTools);
 
-    const response = await provider.generateText(request);
+    // Decide whether to use tools based on step content and available tools
+    const shouldUseTools = this.shouldUseToolsForStep(step, availableTools);
+
+    console.log(`🤖 Agent Core: Processing step "${step.substring(0, 50)}..."`);
+    console.log(`🔧 Available tools: ${availableTools.length}`);
+    console.log(`🎯 Should use tools: ${shouldUseTools}`);
+    console.log(`⚡ Provider supports tools: ${provider.capabilities.supportsTools}`);
+
+    let response;
+    if (shouldUseTools && toolDefinitions.length > 0 && provider.capabilities.supportsTools) {
+      // Use generateWithTools when tools are available and relevant
+      const toolRequest: ToolGenerationRequest = {
+        messages: [
+          {
+            id: `system-${Date.now()}`,
+            role: MessageRole.SYSTEM,
+            content: 'You are a helpful business assistant. Use the available tools when they can help answer the user\'s request. Execute this step clearly and provide 2-4 specific next actions.',
+            timestamp: new Date(),
+          },
+          ...context.conversationHistory.slice(-3), // Include recent context
+          {
+            id: `user-${Date.now()}`,
+            role: MessageRole.USER,
+            content: step,
+            timestamp: new Date(),
+          },
+        ],
+        tools: toolDefinitions,
+        toolChoice: 'auto',
+      };
+
+      const toolResponse = await provider.generateWithTools(toolRequest);
+      
+      // Handle tool calls if any were made
+      if (toolResponse.toolCalls && toolResponse.toolCalls.length > 0) {
+        const toolResults = await this.executeToolCalls(toolResponse.toolCalls);
+        
+        // Create a follow-up request with tool results
+        const followUpRequest: TextGenerationRequest = {
+          messages: [
+            ...toolRequest.messages,
+            {
+              id: `assistant-${Date.now()}`,
+              role: MessageRole.ASSISTANT,
+              content: toolResponse.content,
+              timestamp: new Date(),
+              metadata: { toolCalls: toolResponse.toolCalls },
+            },
+            ...toolResults.map((result, index) => ({
+              id: `tool-${Date.now()}-${index}`,
+              role: MessageRole.TOOL,
+              content: JSON.stringify(result),
+              timestamp: new Date(),
+            })),
+            {
+              id: `user-followup-${Date.now()}`,
+              role: MessageRole.USER,
+              content: 'Based on the tool results above, provide a comprehensive response to the user.',
+              timestamp: new Date(),
+            },
+          ],
+        };
+
+        response = await provider.generateText(followUpRequest);
+      } else {
+        response = toolResponse;
+      }
+    } else {
+      // Use regular text generation when tools aren't needed or available
+      const request: TextGenerationRequest = {
+        messages: [
+          {
+            id: `system-${Date.now()}`,
+            role: MessageRole.SYSTEM,
+            content: 'You are a helpful business assistant. Execute this step clearly and provide 2-4 specific next actions.',
+            timestamp: new Date(),
+          },
+          ...context.conversationHistory.slice(-3), // Include recent context
+          {
+            id: `user-${Date.now()}`,
+            role: MessageRole.USER,
+            content: step,
+            timestamp: new Date(),
+          },
+        ],
+      };
+
+      response = await provider.generateText(request);
+    }
     
     // Generate contextual next step actions
     const nextStepActions = await this.generateNextStepActions(step, context);
@@ -518,12 +628,123 @@ export class AgentCoreImpl implements IAgentCore {
         provider: provider.name,
         workflow: WorkflowType.PROMPT_CHAINING,
         confidence: 0.8,
+        toolsUsed: shouldUseTools && toolDefinitions.length > 0,
       },
     };
   }
 
+  private async executeStepWithTools(step: string, context: ConversationContext, availableTools: BusinessTool[]): Promise<AgentResponse> {
+    const providers = await this.llmRegistry.listProviders();
+    const provider = providers.length > 0 ? providers[0] : null;
+    if (!provider) {
+      throw new AgentError({
+        code: 'LLM_PROVIDER_UNAVAILABLE',
+        message: 'No LLM provider available for step execution',
+        details: { step },
+        recoverable: true,
+        timestamp: new Date(),
+      });
+    }
+
+    const toolDefinitions = this.convertBusinessToolsToLLMFormat(availableTools);
+
+    console.log(`🔧 Executing step with ${toolDefinitions.length} tools available`);
+
+    // Use generateWithTools when tools are available and relevant
+    const toolRequest: ToolGenerationRequest = {
+      messages: [
+        {
+          id: `system-${Date.now()}`,
+          role: MessageRole.SYSTEM,
+          content: 'You are a helpful business assistant. Use the available tools when they can help answer the user\'s request. Provide a comprehensive response and 2-4 specific next actions.',
+          timestamp: new Date(),
+        },
+        ...context.conversationHistory.slice(-3), // Include recent context
+        {
+          id: `user-${Date.now()}`,
+          role: MessageRole.USER,
+          content: step,
+          timestamp: new Date(),
+        },
+      ],
+      tools: toolDefinitions,
+      toolChoice: 'auto',
+    };
+
+    const toolResponse = await provider.generateWithTools(toolRequest);
+    
+    // Handle tool calls if any were made
+    if (toolResponse.toolCalls && toolResponse.toolCalls.length > 0) {
+      console.log(`🛠️ Executing ${toolResponse.toolCalls.length} tool calls`);
+      const toolResults = await this.executeToolCalls(toolResponse.toolCalls);
+      
+      // Create a follow-up request with tool results
+      const followUpRequest: TextGenerationRequest = {
+        messages: [
+          ...toolRequest.messages,
+          {
+            id: `assistant-${Date.now()}`,
+            role: MessageRole.ASSISTANT,
+            content: toolResponse.content,
+            timestamp: new Date(),
+            metadata: { toolCalls: toolResponse.toolCalls },
+          },
+          ...toolResults.map((result, index) => ({
+            id: `tool-${Date.now()}-${index}`,
+            role: MessageRole.TOOL,
+            content: JSON.stringify(result),
+            timestamp: new Date(),
+          })),
+          {
+            id: `user-followup-${Date.now()}`,
+            role: MessageRole.USER,
+            content: 'Based on the tool results above, provide a comprehensive response to the user.',
+            timestamp: new Date(),
+          },
+        ],
+      };
+
+      const finalResponse = await provider.generateText(followUpRequest);
+      
+      // Generate contextual next step actions
+      const nextStepActions = await this.generateNextStepActions(step, context);
+      
+      return {
+        content: finalResponse.content,
+        nextStepActions,
+        metadata: {
+          processingTime: 0,
+          provider: provider.name,
+          workflow: WorkflowType.ROUTING,
+          confidence: 0.8,
+          toolsUsed: true,
+          toolCallsExecuted: toolResponse.toolCalls.length,
+        },
+      };
+    } else {
+      console.log(`📝 No tool calls made, using direct response`);
+      
+      // Generate contextual next step actions
+      const nextStepActions = await this.generateNextStepActions(step, context);
+      
+      return {
+        content: toolResponse.content,
+        nextStepActions,
+        metadata: {
+          processingTime: 0,
+          provider: provider.name,
+          workflow: WorkflowType.ROUTING,
+          confidence: 0.8,
+          toolsUsed: true,
+          toolCallsExecuted: 0,
+        },
+      };
+    }
+  }
+
   private async identifyParallelSubtasks(task: string): Promise<string[]> {
-    const provider = await this.llmRegistry.getProvider('primary');
+    const providers = await this.llmRegistry.listProviders();
+    const provider = providers.length > 0 ? providers[0] : null;
     if (!provider) {
       return [task];
     }
@@ -672,7 +893,8 @@ export class AgentCoreImpl implements IAgentCore {
     }
     
     // Use LLM to orchestrate and synthesize results
-    const provider = await this.llmRegistry.getProvider('primary');
+    const providers = await this.llmRegistry.listProviders();
+    const provider = providers.length > 0 ? providers[0] : null;
     if (!provider) {
       return this.aggregateResponses(results);
     }
@@ -791,7 +1013,8 @@ export class AgentCoreImpl implements IAgentCore {
       return response;
     }
     
-    const provider = await this.llmRegistry.getProvider('primary');
+    const providers = await this.llmRegistry.listProviders();
+    const provider = providers.length > 0 ? providers[0] : null;
     if (!provider) {
       return response;
     }
@@ -1050,6 +1273,86 @@ export class AgentCoreImpl implements IAgentCore {
       default:
         return 'Something unexpected happened, but I\'m still here to help.';
     }
+  }
+
+  // Tool integration helper methods
+  private async getAvailableToolsForContext(context: ConversationContext): Promise<BusinessTool[]> {
+    try {
+      // Get all available tools from the registry
+      const allTools = await this.toolRegistry.listAvailableTools();
+      
+      // Filter tools based on context (could be enhanced with more sophisticated logic)
+      return allTools.filter(tool => {
+        // For now, include all tools, but this could be filtered based on:
+        // - User permissions
+        // - Current conversation context
+        // - Business profile
+        // - Tool relevance to current intent
+        return !tool.metadata?.deprecated;
+      });
+    } catch (error) {
+      this.logger?.warn('Failed to get available tools', error);
+      return [];
+    }
+  }
+
+  private convertBusinessToolsToLLMFormat(businessTools: BusinessTool[]): ToolDefinition[] {
+    return businessTools.map(tool => ({
+      name: tool.id,
+      description: tool.description,
+      parameters: tool.inputSchema as unknown as Record<string, unknown>,
+    }));
+  }
+
+  private shouldUseToolsForStep(step: string, availableTools: BusinessTool[]): boolean {
+    if (availableTools.length === 0) {
+      console.log(`🚫 No tools available`);
+      return false;
+    }
+
+    const stepLower = step.toLowerCase();
+    console.log(`🔍 Analyzing step: "${stepLower}"`);
+    
+    // Check if the step mentions concepts that could benefit from tools
+    const toolKeywords = [
+      'analyze', 'analysis', 'data', 'revenue', 'sales', 'profit', 'seo',
+      'product', 'inventory', 'performance', 'metrics', 'report', 'calculate',
+      'list', 'show', 'get', 'find', 'search', 'marketing', 'campaign',
+      'email', 'optimization', 'score', 'rating', 'comparison'
+    ];
+
+    const matchedKeywords = toolKeywords.filter(keyword => stepLower.includes(keyword));
+    console.log(`🎯 Matched keywords: ${matchedKeywords.join(', ')}`);
+
+    const shouldUse = matchedKeywords.length > 0;
+    console.log(`🤖 Should use tools: ${shouldUse}`);
+    
+    return shouldUse;
+  }
+
+  private async executeToolCalls(toolCalls: Array<{ id: string; name: string; parameters: Record<string, unknown> }>): Promise<Array<{ toolCallId: string; result: any; success: boolean; error?: string | undefined }>> {
+    const results = [];
+
+    for (const toolCall of toolCalls) {
+      try {
+        const result = await this.toolRegistry.executeTool(toolCall.name, toolCall.parameters);
+        results.push({
+          toolCallId: toolCall.id,
+          result: result.data,
+          success: result.success,
+          error: result.success ? undefined : (result.error?.message || 'Unknown error'),
+        });
+      } catch (error) {
+        results.push({
+          toolCallId: toolCall.id,
+          result: null,
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown tool execution error',
+        });
+      }
+    }
+
+    return results;
   }
 }
 

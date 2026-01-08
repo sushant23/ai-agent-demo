@@ -116,6 +116,7 @@ export class OpenAIProvider extends BaseLLMProvider {
   }
 
   async generateWithTools(request: ToolGenerationRequest): Promise<ToolGenerationResponse> {
+    console.log(`🔧 OpenAI Provider: generateWithTools called with ${request.tools.length} tools`);
     this.validateToolRequest(request);
 
     try {
@@ -330,6 +331,7 @@ export class OpenAIProvider extends BaseLLMProvider {
   }
 
   private async makeOpenAIRequest(endpoint: string, body: Record<string, unknown>): Promise<OpenAIResponse> {
+    console.log({body: JSON.stringify(body)})
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       method: 'POST',
       headers: {

@@ -13,6 +13,7 @@
     "chat-multi": "ts-node src/chat-demo.ts multi",
     "chat-error": "ts-node src/chat-demo.ts error",
     "chat-all": "ts-node src/chat-demo.ts all",
+    "web-server": "ts-node src/web-server.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -20,10 +21,18 @@
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write src/**/*.ts"
   },
-  "keywords": ["ai", "agent", "llm", "ecommerce", "typescript"],
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "ecommerce",
+    "typescript"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
@@ -38,5 +47,8 @@
     "ts-node": "^10.9.0",
     "typescript": "^5.0.0"
   },
-  "dependencies": {}
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.2.1"
+  }
 }
