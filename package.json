@@ -1,0 +1,42 @@
+{
+  "name": "llm-agnostic-ai-agent",
+  "version": "1.0.0",
+  "description": "LLM agnostic AI agent architecture for e-commerce business assistance",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "demo": "ts-node src/integration-demo.ts",
+    "chat": "ts-node src/chat-demo.ts interactive",
+    "chat-demo": "ts-node src/chat-demo.ts",
+    "chat-basic": "ts-node src/chat-demo.ts basic",
+    "chat-multi": "ts-node src/chat-demo.ts multi",
+    "chat-error": "ts-node src/chat-demo.ts error",
+    "chat-all": "ts-node src/chat-demo.ts all",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "format": "prettier --write src/**/*.ts"
+  },
+  "keywords": ["ai", "agent", "llm", "ecommerce", "typescript"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-prettier": "^5.0.0",
+    "fast-check": "^3.15.0",
+    "jest": "^29.5.0",
+    "prettier": "^3.0.0",
+    "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {}
+}
